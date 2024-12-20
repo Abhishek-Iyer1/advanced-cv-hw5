@@ -5,9 +5,11 @@
 ###################################################################### #
 
 import numpy as np
+import skimage.io
 from matplotlib import pyplot as plt
 from skimage.color import rgb2xyz
-from utils import plotSurface
+from utils import plotSurface, integrateFrankot
+from PIL import Image
 
 
 def renderNDotLSphere(center, rad, light, pxSize, res):
@@ -49,9 +51,11 @@ def renderNDotLSphere(center, rad, light, pxSize, res):
     X[np.real(Z) == 0] = 0
     Y[np.real(Z) == 0] = 0
     Z = np.real(Z)
-
-    image = None
-    # Your code here
+    n = np.stack([-X, -Y, Z], axis=-1)
+    # Perform N-dot-L at every pixel to see how the image would look
+    image = np.einsum('ijk,k->ij', n, light)
+    # Clip as we don't want any contribution of the light pointing away.
+    image = np.clip(image, 0, np.inf)
     return image
 
 
@@ -81,10 +85,24 @@ def loadData(path="../data/"):
 
     """
 
-    I = None
-    L = None
-    s = None
-    # Your code here
+    # Append images to list since shape unknown
+    images = []
+
+    # Iterate over all images
+    for i in range(1, 8):
+        # Load image and convert to array with uint16
+        image_path = f"/home/lonewolf/dev_ws/advanced_cv/advanced-cv-hw5/data/input_{i}.tif"
+        image = skimage.io.imread(image_path)
+        image_array = np.asarray(image, dtype=np.uint16)
+        # Convert color channel to xyz and extract luminance
+        image_xyz = rgb2xyz(image_array)
+        image_luminance = image_xyz[:,:,1]
+        images.append(image_luminance.flatten())
+    
+    # Convert list to array, load lighting as 3x7, return image shape so image can be reconstructed
+    I = np.stack(images, axis=0)
+    L = np.load("/home/lonewolf/dev_ws/advanced_cv/advanced-cv-hw5/data/sources.npy").T
+    s = image_array.shape[:2]
     return I, L, s
 
 
@@ -109,8 +127,9 @@ def estimatePseudonormalsCalibrated(I, L):
         The 3 x P matrix of pesudonormals
     """
 
-    B = None
-    # Your code here
+    # Solve the least squares problem to find B
+    B, residuals, rank, s = np.linalg.lstsq(L.T, I, rcond=None)
+
     return B
 
 
@@ -134,9 +153,8 @@ def estimateAlbedosNormals(B):
         The 3 x P matrix of normals
     """
 
-    albedos = None
-    normals = None
-    # Your code here
+    albedos = np.linalg.norm(B, axis=0, keepdims=True)
+    normals = B / albedos
     return albedos, normals
 
 
@@ -147,8 +165,12 @@ def displayAlbedosNormals(albedos, normals, s):
     From the estimated pseudonormals, display the albedo and normal maps
 
     Please make sure to use the `coolwarm` colormap for the albedo image
-    and the `rainbow` colormap for the normals.
-
+    and the `rainbow` colormap for the    U, S, vh = np.linalg.svd(I, full_matrices=False)
+    S[3:] = 0
+    Ihat = U @ np.diag(S) @ vh
+    U_hat, S_hat, vh_hat = np.linalg.svd(Ihat, full_matrices=False)
+    B = np.sqrt(np.diag(S[:3])) @ vh_hat[:3, :]
+    L = U_hat[:, :3] @ np.sqrt(np.diag(S[:3]))
     Parameters
     ----------
     albedos : numpy.ndarray
@@ -170,9 +192,29 @@ def displayAlbedosNormals(albedos, normals, s):
 
     """
 
-    albedoIm = None
-    normalIm = None
-    # Your code here
+    # Reshape albedos to the image shape
+    albedoIm = np.reshape(albedos, s)
+
+    # Reshape normals to the image shape with 3 channels
+    normalIm = np.reshape(normals, (3, s[0], s[1])).transpose((1,2,0))
+
+    # Normalize the normalIm to the range [0, 1]
+    normalIm = (normalIm - normalIm.min()) / (normalIm.max() - normalIm.min())
+
+    # Display the albedo image using the coolwarm colormap
+    plt.figure()
+    plt.imshow(albedoIm, cmap='gray')
+    plt.title('Albedo Image')
+    plt.colorbar()
+    plt.show()
+
+    # Display the normal image using the rainbow colormap
+    plt.figure()
+    plt.imshow(normalIm, cmap='rainbow')
+    plt.title('Normal Map')
+    plt.colorbar()
+    plt.show()
+    
     return albedoIm, normalIm
 
 
@@ -195,11 +237,25 @@ def estimateShape(normals, s):
     ----------
     surface: numpy.ndarray
         The image, of size s, of estimated depths at each point
-
+s
     """
-
-    surface = None
-    # Your code here
+    normalIm = np.reshape(normals, (3, s[0], s[1])).transpose((1,2,0))
+    # plt.close("all")
+    # plt.figure()
+    # plt.imshow(normalIm)
+    dz_dx = -normals[0,:] / normals[2,:]
+    dz_dy = -normals[1,:] / normals[2,:]
+    dz_dx_Im = np.reshape(dz_dx, (s[0], s[1]))
+    dz_dy_Im = np.reshape(dz_dy, (s[0], s[1]))
+    # plt.figure()
+    # plt.imshow(np.reshape(-normals[0,:], s))
+    # plt.figure()
+    # plt.imshow(np.reshape(-normals[1,:], s))
+    # plt.figure()
+    # plt.imshow(np.reshape(-normals[2,:], s))
+    # plt.legend()
+    # plt.show()
+    surface = integrateFrankot(dz_dx_Im, dz_dy_Im)
     return surface
 
 
@@ -215,24 +271,29 @@ if __name__ == "__main__":
     plt.figure()
     plt.imshow(image, cmap="gray")
     plt.imsave("1b-a.png", image, cmap="gray")
+    plt.close()
 
     light = np.asarray([1, -1, 1]) / np.sqrt(3)
     image = renderNDotLSphere(center, radius, light, pxSize, res)
     plt.figure()
     plt.imshow(image, cmap="gray")
     plt.imsave("1b-b.png", image, cmap="gray")
+    plt.close()
 
     light = np.asarray([-1, -1, 1]) / np.sqrt(3)
     image = renderNDotLSphere(center, radius, light, pxSize, res)
     plt.figure()
     plt.imshow(image, cmap="gray")
     plt.imsave("1b-c.png", image, cmap="gray")
+    plt.close()
 
     # Part 1(c)
     I, L, s = loadData("../data/")
 
     # Part 1(d)
-    # Your code here
+    U, Sigma, V = np.linalg.svd(I, full_matrices=False)
+    print(f"Sigma: {Sigma}")
+    print(f"Sigma normalized: {Sigma/np.max(Sigma)}")
 
     # Part 1(e)
     B = estimatePseudonormalsCalibrated(I, L)

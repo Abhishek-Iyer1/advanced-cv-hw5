@@ -27,23 +27,25 @@ def estimatePseudonormalsUncalibrated(I):
     I : numpy.ndarray
         The 7 x P matrix of loaded images
 
-    Returns
     -------
-    B : numpy.ndarray
-        The 3 x P matrix of pseudonormals
-
+    B : numpy.ndar0.001
     L : numpy.ndarray
         The 3 x 7 array of lighting directions
 
     """
 
-    B = None
-    L = None
-    # Your code here
+    U, S, vh = np.linalg.svd(I, full_matrices=False)
+    S[3:] = 0
+    Ihat = U @ np.diag(S) @ vh
+    U_hat, S_hat, vh_hat = np.linalg.svd(Ihat, full_matrices=False)
+    # B = np.sqrt(np.diag(S[:3])) @ vh_hat[:3, :]
+    # L = U_hat[:, :3] @ np.sqrt(np.diag(S[:3])).T
+    B = vh_hat[:3, :]
+    L = U_hat[:, :3]
     return B, L
 
 
-def plotBasRelief(B, mu, nu, lam):
+def plotBasRelief(B, mu, nu, lam, s):
     """
     Question 2 (f)
 
@@ -68,20 +70,42 @@ def plotBasRelief(B, mu, nu, lam):
         None
 
     """
-
-    # Your code here
+    G = np.array([[ 1,  0,   0],
+                  [ 0,  1,   0],
+                  [mu, nu, lam]])
+    B_bas = G @ B
+    surface = estimateShape(B_bas, s)
+    plotSurface(surface, suffix=f"mu_{mu}_nu_{nu}_lam_{lam}.png")
     pass
 
-    if __name__ == "__main__":
-        pass
-        # Part 2 (b)
-        # Your code here
+if __name__ == "__main__":
+    I, L_ref, s = loadData("../data/")
+    B_hat, L_hat = estimatePseudonormalsUncalibrated(I)
 
-        # Part 2 (d)
-        # Your code here
+    print(f"L ref: {L_ref.T}, L hat: {L_hat}")
 
-        # Part 2 (e)
-        # Your code here
+    #Part 2 (b)
+    #Your code here
+    albedos, normals = estimateAlbedosNormals(B_hat)
+    albedoIm, normalIm = displayAlbedosNormals(albedos, normals, s)
+    plt.imsave("2b-a.png", albedoIm, cmap="gray")
+    plt.imsave("2b-b.png", normalIm, cmap="rainbow")
 
-        # Part 2 (f)
-        # Your code here
+    # Part 2 (d)
+    surface = estimateShape(normals, s)
+    plotSurface(surface)
+
+    #Part 2 (e)
+    G = np.array([[1, 0, 0],
+                 [0, 1, 0],
+                 [0, 0, -1]])
+    B_gbr = G@B_hat
+    # B_gbr = B_hat
+    integrable_B = enforceIntegrability(B_gbr, s)
+    _, integrable_normals = estimateAlbedosNormals(integrable_B)
+    surface = estimateShape(integrable_normals, s)
+    plotSurface(surface)
+
+    #Part 2 (f)
+    plotBasRelief(integrable_B, 0, 0, 1, s)
+    plotBasRelief(integrable_B, 0, 0, 0.1, s)
